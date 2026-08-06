@@ -1937,5 +1937,9 @@ async def on_ready():
         print(e)
 
 
-TOKEN = ""
-bot.run(TOKEN)
+TOKEN = os.getenv("DISCORD_TOKEN")
+
+if TOKEN:
+    bot.run(TOKEN)
+else:
+    print("❌ Token not found!")
