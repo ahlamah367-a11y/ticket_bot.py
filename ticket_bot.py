@@ -716,9 +716,9 @@ class TicketSelect(discord.ui.Select):
                     label=data["name"],
                     value=ticket_id,
                     description=data.get("panel_description", data.get("description", "فتح تذكرة"))[:100],
-                    emoji=data.get("emoji", "🎫")
-                )
-            )
+                    emoji=discord.PartialEmoji.from_str(
+    data.get("emoji", "🎫")
+                    )
 
         if not options:
             options.append(discord.SelectOption(label="لا يوجد تذاكر", value="none"))
