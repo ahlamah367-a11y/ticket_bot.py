@@ -867,7 +867,108 @@ class TicketSelect(discord.ui.Select):
 
 
 
-        # نموذج الأسئلة
+# ==================================
+# القوائم والبانل الموحد
+# ==================================
+
+class TicketSelect(discord.ui.Select):
+
+    def __init__(self):
+
+        options = []
+
+        for ticket_id, data in database["tickets"].items():
+
+            options.append(
+                discord.SelectOption(
+                    label=data["name"],
+                    value=ticket_id,
+                    description=data.get(
+                        "panel_description",
+                        data.get("description", "فتح تذكرة")
+                    )[:100],
+                    emoji=data.get("emoji", "🎫")
+                )
+            )
+
+
+        if not options:
+
+            options.append(
+                discord.SelectOption(
+                    label="لا يوجد تذاكر",
+                    value="none",
+                    emoji="❌"
+                )
+            )
+
+
+        # خيار تحديث المنيو
+        options.append(
+            discord.SelectOption(
+                label="🔄 تحديث القائمة",
+                value="refresh_menu",
+                description="إعادة تحميل أنواع التذاكر",
+                emoji="🔄"
+            )
+        )
+
+
+        super().__init__(
+            placeholder="🎫 اختر نوع التذكرة",
+            options=options,
+            custom_id="ticket_select_menu_secure"
+        )
+
+
+    async def callback(self, interaction: discord.Interaction):
+
+        ticket_type = self.values[0]
+
+
+        # تحديث المنيو
+        if ticket_type == "refresh_menu":
+
+            await interaction.response.edit_message(
+                view=TicketPanel()
+            )
+
+            return
+
+
+
+        if ticket_type == "none":
+
+            await interaction.response.send_message(
+                "❌ لا يوجد أنواع تذاكر حاليا",
+                ephemeral=True
+            )
+
+            return
+
+
+
+        user_id = interaction.user.id
+
+        ticket_settings = database["tickets"].get(ticket_type)
+
+
+
+        # منع فتح أكثر من تذكرة
+        for t in database["open_tickets"].values():
+
+            if t.get("owner") == user_id:
+
+                await interaction.response.send_message(
+                    "❌ لديك تذكرة مفتوحة بالفعل",
+                    ephemeral=True
+                )
+
+                return
+
+
+
+        # طلب سبب
         if ticket_settings and ticket_settings.get("ask_reason"):
 
             await interaction.response.send_modal(
@@ -878,7 +979,6 @@ class TicketSelect(discord.ui.Select):
 
 
 
-        # فتح التذكرة
         await create_ticket(
             interaction,
             ticket_type,
@@ -887,17 +987,125 @@ class TicketSelect(discord.ui.Select):
 
 
 
+# ==================================
+# View البانل
+# ==================================
+
 class TicketPanel(discord.ui.View):
 
     def __init__(self):
 
-        super().__init__(
-            timeout=None
-        )
+        super().__init__(timeout=None)
 
         self.add_item(
             TicketSelect()
         )
+
+
+
+# ==================================
+# أمر إرسال البانل
+# ==================================
+
+@bot.tree.command(
+    name="send-ticket-panel",
+    description="إرسال بانل التذاكر الموحد"
+)
+async def send_ticket_panel(interaction: discord.Interaction):
+
+
+    if not interaction.user.guild_permissions.administrator:
+
+        await interaction.response.send_message(
+            "❌ هذا الأمر للمشرفين فقط",
+            ephemeral=True
+        )
+
+        return
+
+
+
+    await interaction.response.defer(
+        ephemeral=True
+    )
+
+
+
+    panel = database["panel"]
+
+
+    old_message_id = panel.get("message_id")
+
+
+
+    if old_message_id:
+
+        try:
+
+            old_message = await interaction.channel.fetch_message(
+                old_message_id
+            )
+
+            await old_message.delete()
+
+
+        except:
+
+            pass
+
+
+
+    embed = discord.Embed(
+
+        title=panel.get(
+            "title",
+            "🎫 نظام التذاكر"
+        ),
+
+        description=panel.get(
+            "description",
+            "اختر نوع التذكرة من القائمة"
+        ),
+
+        color=discord.Color.blue()
+
+    )
+
+
+
+    if panel.get("image"):
+
+        embed.set_image(
+            url=panel["image"]
+        )
+
+
+
+    message = await interaction.channel.send(
+
+        embed=embed,
+
+        view=TicketPanel()
+
+    )
+
+
+
+    database["panel"]["message_id"] = message.id
+
+    database["panel"]["channel"] = interaction.channel.id
+
+    save_database()
+
+
+
+    await interaction.followup.send(
+
+        "✅ تم إرسال بانل التذاكر",
+
+        ephemeral=True
+
+    )
 # ==================================
 # نظام نماذج التذاكر (Ticket Forms)
 # ==================================
