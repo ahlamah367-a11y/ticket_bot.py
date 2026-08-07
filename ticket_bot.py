@@ -701,12 +701,6 @@ async def panel_setup(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed, view=PanelSettingsView(), ephemeral=True)
 
-
-# ==================================
-# القوائم والبانل الموحد
-# ==================================
-
-class TicketSelect(discord.ui.Select):
 # ==================================
 # القوائم والبانل الموحد
 # ==================================
