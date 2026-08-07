@@ -708,9 +708,12 @@ async def panel_setup(interaction: discord.Interaction):
 class TicketSelect(discord.ui.Select):
 
     def __init__(self):
+
         options = []
 
+        # إضافة أنواع التذاكر
         for ticket_id, data in database["tickets"].items():
+
             options.append(
                 discord.SelectOption(
                     label=data["name"],
@@ -725,22 +728,29 @@ class TicketSelect(discord.ui.Select):
                 )
             )
 
+
+        # إذا لا يوجد تذاكر
         if not options:
+
             options.append(
                 discord.SelectOption(
                     label="لا يوجد تذاكر",
-                    value="none"
+                    value="none",
+                    emoji="❌"
                 )
             )
 
-        # خيار تحديث القائمة
+
+        # إضافة خيار الريست منيو
         options.append(
             discord.SelectOption(
                 label="🔄 تحديث القائمة",
                 value="refresh_menu",
-                description="تحديث قائمة التذاكر"
+                description="تحديث قائمة التذاكر",
+                emoji="🔄"
             )
         )
+
 
         super().__init__(
             placeholder="🎫 اختر نوع التذكرة",
@@ -753,85 +763,122 @@ class TicketSelect(discord.ui.Select):
 
         ticket_type = self.values[0]
 
-        # تحديث القائمة بدون فتح تذكرة
+
+        # 🔄 تحديث القائمة فقط
         if ticket_type == "refresh_menu":
+
             await interaction.response.edit_message(
                 view=TicketPanel()
             )
+
             return
 
 
+
+        # لا يوجد تذاكر
         if ticket_type == "none":
+
             await interaction.response.send_message(
-                "❌ لا يوجد أنواع تذاكر",
+                "❌ لا يوجد أنواع تذاكر حالياً",
                 ephemeral=True
             )
+
             return
+
 
 
         user_id = interaction.user.id
+
         ticket_settings = database["tickets"].get(ticket_type)
 
 
+        # منع فتح أكثر من تذكرة
         for t in database["open_tickets"].values():
+
             if t["owner"] == user_id:
+
                 await interaction.response.send_message(
                     "❌ لديك تذكرة مفتوحة بالفعل",
                     ephemeral=True
                 )
+
                 return
 
 
+
+        # فحص الحد الأعلى
         opened_count = 0
 
         for t in database["open_tickets"].values():
+
             if t.get("owner") == user_id:
+
                 opened_count += 1
 
 
+
         if ticket_settings and opened_count >= ticket_settings.get("max_tickets", 1):
+
             await interaction.response.send_message(
                 "❌ وصلت الحد الأقصى من التذاكر المفتوحة",
                 ephemeral=True
             )
+
             return
 
 
+
+        # فحص الرتب الممنوعة
         if ticket_settings:
 
-            user_roles = [r.id for r in interaction.user.roles]
+            user_roles = [
+                role.id for role in interaction.user.roles
+            ]
 
             for role in ticket_settings.get("blocked_roles", []):
 
                 if role in user_roles:
+
                     await interaction.response.send_message(
                         "❌ لا يمكنك فتح هذه التذكرة",
                         ephemeral=True
                     )
+
                     return
 
 
+
+        # منع نفس نوع التذكرة
         if ticket_settings and ticket_settings.get("prevent_same_type", True):
 
             for t in database["open_tickets"].values():
 
-                if t.get("owner") == user_id and t["type"] == ticket_type:
+                if (
+                    t.get("owner") == user_id
+                    and t["type"] == ticket_type
+                ):
 
                     await interaction.response.send_message(
-                        "❌ لديك تذكرة مفتوحة من نفس النوع بالفعل",
+                        "❌ لديك نفس نوع التذكرة مفتوحة بالفعل",
                         ephemeral=True
                     )
+
                     return
 
 
+
+        # نموذج الأسئلة
         if ticket_settings and ticket_settings.get("ask_reason"):
 
             await interaction.response.send_modal(
                 TicketFormModal(ticket_type)
             )
+
             return
 
 
+
+        # فتح التذكرة
         await create_ticket(
             interaction,
             ticket_type,
@@ -844,10 +891,13 @@ class TicketPanel(discord.ui.View):
 
     def __init__(self):
 
-        super().__init__(timeout=None)
-        self.add_item(TicketSelect())
+        super().__init__(
+            timeout=None
+        )
 
-
+        self.add_item(
+            TicketSelect()
+        )
 # ==================================
 # نظام نماذج التذاكر (Ticket Forms)
 # ==================================
