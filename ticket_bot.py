@@ -2011,10 +2011,10 @@ async def on_guild_channel_delete(channel):
 @bot.event
 async def on_ready():
     print(f"✅ Bot Online: {bot.user}")
-    
+
     bot.add_view(TicketPanel())
     bot.add_view(TicketButtons())
-    
+
     for channel_id in database["open_tickets"]:
         bot.add_view(RatingView(int(channel_id)))
 
@@ -2022,10 +2022,15 @@ async def on_ready():
     bot.loop.create_task(database_backup())
 
     try:
-        synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} Commands")
+        guild = discord.Object(id=GUILD_ID)
+
+        bot.tree.copy_global_to(guild=guild)
+        synced = await bot.tree.sync(guild=guild)
+
+        print(f"✅ Guild Synced: {len(synced)} Commands")
+
     except Exception as e:
-        print(e)
+        print(f"❌ Sync Error: {type(e).__name__}: {e}")
 
 
 TOKEN = os.getenv("DISCORD_TOKEN")
