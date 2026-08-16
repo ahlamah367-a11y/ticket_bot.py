@@ -85,6 +85,7 @@ def default_database():
             "channel": None,
             "message_id": None
         },
+        "panels": {},
         "open_tickets": {},
         "closed_today": 0,
         "stats": {
@@ -135,6 +136,12 @@ try:
 except:
     database = default_database()
     save_database()
+
+# دعم البانلات المتعددة لقاعدة البيانات القديمة
+if "panels" not in database:
+    database["panels"] = {}
+
+save_database()
 
 
 
@@ -633,71 +640,166 @@ async def ticket_rename_type(
 
 
 # ==================================
-# إعدادات البانل والمودال
+# إعدادات البانل والمودال (البانلات المتعددة)
 # ==================================
 
-class PanelSettingsModal(discord.ui.Modal):
-
-    def __init__(self, option):
-        super().__init__(title="تعديل البانل")
-        self.option = option
-
-        self.value = discord.ui.TextInput(
-            label="القيمة الجديدة",
-            placeholder="اكتب التعديل هنا",
-            required=True,
-            max_length=500
+@bot.tree.command(
+    name="add-ticket-panel",
+    description="إنشاء بانل تذاكر جديد"
+)
+@app_commands.describe(
+    title="عنوان البانل",
+    description="وصف البانل",
+    image="رابط صورة البانل - اختياري"
+)
+async def add_ticket_panel(
+    interaction: discord.Interaction,
+    title: str,
+    description: str,
+    image: str = None
+):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ هذا الأمر للمشرفين فقط",
+            ephemeral=True
         )
-        self.add_item(self.value)
+        return
 
-    async def on_submit(self, interaction: discord.Interaction):
-        value = self.value.value
+    await interaction.response.defer(ephemeral=True)
 
-        if self.option == "title":
-            database["panel"]["title"] = value
-        elif self.option == "description":
-            database["panel"]["description"] = value
-        elif self.option == "image":
-            database["panel"]["image"] = value
+    panel_id = f"panel_{len(database['panels']) + 1}"
 
-        save_database()
-        await interaction.response.send_message("✅ تم تعديل البانل", ephemeral=True)
-
-
-
-class PanelSettingsView(discord.ui.View):
-
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.select(
-        placeholder="إعدادات البانل",
-        options=[
-            discord.SelectOption(label="تعديل عنوان البانل", value="title", emoji="✏️"),
-            discord.SelectOption(label="تعديل وصف البانل", value="description", emoji="📜"),
-            discord.SelectOption(label="إضافة صورة للبانل", value="image", emoji="🖼️")
-        ]
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=discord.Color.blue()
     )
-    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
-        await interaction.response.send_modal(PanelSettingsModal(select.values[0]))
+
+    if image:
+        embed.set_image(url=image)
+
+    message = await interaction.channel.send(
+        embed=embed,
+        view=TicketPanel()
+    )
+
+    database["panels"][panel_id] = {
+        "title": title,
+        "description": description,
+        "image": image,
+        "channel": interaction.channel.id,
+        "message_id": message.id,
+        "created_by": interaction.user.id,
+        "created_at": str(datetime.now())
+    }
+
+    save_database()
+
+    await interaction.followup.send(
+        embed=make_embed(
+            "✅ تم إنشاء البانل",
+            f"تم إنشاء بانل جديد بنجاح.\n\n"
+            f"🆔 المعرف: `{panel_id}`\n"
+            f"📌 البانل: {message.jump_url}",
+            discord.Color.green()
+        ),
+        ephemeral=True
+    )
 
 
 
 @bot.tree.command(
-    name="panel-setup",
-    description="تعديل إعدادات البانل الموحد"
+    name="panels-list",
+    description="عرض جميع بانلات التذاكر"
 )
-async def panel_setup(interaction: discord.Interaction):
+async def panels_list(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للمشرفين فقط", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ هذا الأمر للمشرفين فقط",
+            ephemeral=True
+        )
+        return
+
+    if not database.get("panels"):
+        await interaction.response.send_message(
+            "❌ لا يوجد أي بانلات حالياً",
+            ephemeral=True
+        )
         return
 
     embed = discord.Embed(
-        title="🖥️ إعداد البانل",
-        description="اختر الشيء الذي تريد تعديله:\n\n✏️ العنوان\n📜 الوصف\n🖼️ الصورة",
+        title="🖥️ جميع بانلات التذاكر",
         color=discord.Color.blue()
     )
-    await interaction.response.send_message(embed=embed, view=PanelSettingsView(), ephemeral=True)
+
+    for panel_id, panel in database["panels"].items():
+        channel = interaction.guild.get_channel(panel.get("channel"))
+        channel_text = channel.mention if channel else "❌ الروم غير موجود"
+
+        embed.add_field(
+            name=f"🆔 {panel_id}",
+            value=(
+                f"📌 **العنوان:** {panel.get('title', 'بدون عنوان')}\n"
+                f"📜 **الوصف:** {panel.get('description', 'بدون وصف')}\n"
+                f"📍 **الروم:** {channel_text}\n"
+                f"🔗 [فتح البانل](https://discord.com/channels/"
+                f"{interaction.guild.id}/"
+                f"{panel.get('channel')}/"
+                f"{panel.get('message_id')})"
+            ),
+            inline=False
+        )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
+    )
+
+
+
+@bot.tree.command(
+    name="delete-ticket-panel",
+    description="حذف بانل تذاكر معين"
+)
+@app_commands.describe(
+    panel_id="معرف البانل مثل panel_1"
+)
+async def delete_ticket_panel(
+    interaction: discord.Interaction,
+    panel_id: str
+):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ هذا الأمر للمشرفين فقط",
+            ephemeral=True
+        )
+        return
+
+    panel = database["panels"].get(panel_id)
+
+    if not panel:
+        await interaction.response.send_message(
+            "❌ لم يتم العثور على هذا البانل",
+            ephemeral=True
+        )
+        return
+
+    channel = interaction.guild.get_channel(panel.get("channel"))
+
+    if channel:
+        try:
+            message = await channel.fetch_message(panel.get("message_id"))
+            await message.delete()
+        except:
+            pass
+
+    del database["panels"][panel_id]
+    save_database()
+
+    await interaction.response.send_message(
+        f"✅ تم حذف البانل `{panel_id}` بنجاح",
+        ephemeral=True
+    )
 
 
 # ==================================
@@ -833,112 +935,6 @@ class TicketPanel(discord.ui.View):
         self.add_item(
             TicketSelect()
         )
-
-
-
-# ==================================
-# أمر إرسال البانل
-# ==================================
-
-@bot.tree.command(
-    name="send-ticket-panel",
-    description="إرسال بانل التذاكر الموحد"
-)
-async def send_ticket_panel(interaction: discord.Interaction):
-
-
-    if not interaction.user.guild_permissions.administrator:
-
-        await interaction.response.send_message(
-            "❌ هذا الأمر للمشرفين فقط",
-            ephemeral=True
-        )
-
-        return
-
-
-
-    await interaction.response.defer(
-        ephemeral=True
-    )
-
-
-
-    panel = database["panel"]
-
-
-    old_message_id = panel.get("message_id")
-
-
-
-    if old_message_id:
-
-        try:
-
-            old_message = await interaction.channel.fetch_message(
-                old_message_id
-            )
-
-            await old_message.delete()
-
-
-        except:
-
-            pass
-
-
-
-    embed = discord.Embed(
-
-        title=panel.get(
-            "title",
-            "🎫 نظام التذاكر"
-        ),
-
-        description=panel.get(
-            "description",
-            "اختر نوع التذكرة من القائمة"
-        ),
-
-        color=discord.Color.blue()
-
-    )
-
-
-
-    if panel.get("image"):
-
-        embed.set_image(
-            url=panel["image"]
-        )
-
-
-
-    message = await interaction.channel.send(
-
-        embed=embed,
-
-        view=TicketPanel()
-
-    )
-
-
-
-    database["panel"]["message_id"] = message.id
-
-    database["panel"]["channel"] = interaction.channel.id
-
-    save_database()
-
-
-
-    await interaction.followup.send(
-
-        "✅ تم إرسال بانل التذاكر",
-
-        ephemeral=True
-
-    )
 
 
 # ==================================
