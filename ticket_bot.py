@@ -137,9 +137,13 @@ except:
     database = default_database()
     save_database()
 
-# دعم البانلات المتعددة لقاعدة البيانات القديمة
+# دعم البانلات المتعددة وربط كل بانل بتذاكره الخاصة
 if "panels" not in database:
     database["panels"] = {}
+
+for panel_id, panel in database["panels"].items():
+    if "tickets" not in panel:
+        panel["tickets"] = []
 
 save_database()
 
@@ -538,6 +542,16 @@ async def ticket_delete(
         return
 
     del database["tickets"][ticket_id]
+
+    # إزالة التذكرة من جميع البانلات التي كانت تحتوي عليها
+    for panel_id, panel in database.get("panels", {}).items():
+        if ticket_id in panel.get("tickets", []):
+            panel["tickets"].remove(ticket_id)
+            try:
+                await refresh_panel_message(interaction.guild, panel_id)
+            except:
+                pass
+
     save_database()
 
     await interaction.response.send_message("✅ تم حذف نوع التذكرة", ephemeral=True)
@@ -667,7 +681,24 @@ async def add_ticket_panel(
 
     await interaction.response.defer(ephemeral=True)
 
-    panel_id = f"panel_{len(database['panels']) + 1}"
+    panel_number = 1
+    while f"panel_{panel_number}" in database["panels"]:
+        panel_number += 1
+
+    panel_id = f"panel_{panel_number}"
+
+    database["panels"][panel_id] = {
+        "title": title,
+        "description": description,
+        "image": image,
+        "channel": interaction.channel.id,
+        "message_id": None,
+        "created_by": interaction.user.id,
+        "created_at": str(datetime.now()),
+        "tickets": []
+    }
+
+    save_database()
 
     embed = discord.Embed(
         title=title,
@@ -680,27 +711,20 @@ async def add_ticket_panel(
 
     message = await interaction.channel.send(
         embed=embed,
-        view=TicketPanel()
+        view=TicketPanel(panel_id)
     )
 
-    database["panels"][panel_id] = {
-        "title": title,
-        "description": description,
-        "image": image,
-        "channel": interaction.channel.id,
-        "message_id": message.id,
-        "created_by": interaction.user.id,
-        "created_at": str(datetime.now())
-    }
-
+    database["panels"][panel_id]["message_id"] = message.id
     save_database()
 
     await interaction.followup.send(
         embed=make_embed(
             "✅ تم إنشاء البانل",
-            f"تم إنشاء بانل جديد بنجاح.\n\n"
-            f"🆔 المعرف: `{panel_id}`\n"
-            f"📌 البانل: {message.jump_url}",
+            f"تم إنشاء البانل بنجاح.\n\n"
+            f"🆔 **المعرف:** `{panel_id}`\n"
+            f"📌 **البانل:** {message.jump_url}\n\n"
+            f"🎫 حالياً لا توجد تذاكر داخل هذا البانل.\n"
+            f"استخدم `/panel-add-ticket` لإضافة تذكرة إليه.",
             discord.Color.green()
         ),
         ephemeral=True
@@ -803,116 +827,294 @@ async def delete_ticket_panel(
 
 
 # ==================================
+# ربط التذاكر بالبانلات
+# ==================================
+
+async def refresh_panel_message(guild, panel_id):
+    panel = database["panels"].get(panel_id)
+    if not panel:
+        return False
+
+    channel = guild.get_channel(panel.get("channel"))
+    if not channel:
+        return False
+
+    try:
+        message = await channel.fetch_message(panel.get("message_id"))
+        await message.edit(view=TicketPanel(panel_id))
+        return True
+    except Exception as e:
+        print(f"Panel refresh error: {e}")
+        return False
+
+
+@bot.tree.command(
+    name="panel-add-ticket",
+    description="إضافة نوع تذكرة إلى بانل معين"
+)
+@app_commands.describe(
+    panel_id="معرف البانل مثل panel_1",
+    ticket_id="معرف نوع التذكرة مثل ticket_1"
+)
+async def panel_add_ticket(
+    interaction: discord.Interaction,
+    panel_id: str,
+    ticket_id: str
+):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ هذا الأمر للمشرفين فقط.",
+            ephemeral=True
+        )
+        return
+
+    panel = database["panels"].get(panel_id)
+    if not panel:
+        await interaction.response.send_message(
+            f"❌ البانل `{panel_id}` غير موجود.",
+            ephemeral=True
+        )
+        return
+
+    ticket = database["tickets"].get(ticket_id)
+    if not ticket:
+        await interaction.response.send_message(
+            f"❌ نوع التذكرة `{ticket_id}` غير موجود.",
+            ephemeral=True
+        )
+        return
+
+    if ticket_id in panel.get("tickets", []):
+        await interaction.response.send_message(
+            f"⚠️ التذكرة **{ticket['name']}** موجودة بالفعل داخل `{panel_id}`.",
+            ephemeral=True
+        )
+        return
+
+    panel.setdefault("tickets", [])
+    panel["tickets"].append(ticket_id)
+    save_database()
+
+    updated = await refresh_panel_message(interaction.guild, panel_id)
+
+    await interaction.response.send_message(
+        embed=make_embed(
+            "✅ تمت إضافة التذكرة",
+            f"🎫 **التذكرة:** {ticket['name']}\n"
+            f"🆔 **المعرف:** `{ticket_id}`\n\n"
+            f"🖥️ **البانل:** `{panel_id}`\n\n"
+            f"{'🔄 تم تحديث البانل مباشرة.' if updated else '⚠️ تمت الإضافة لكن تعذر تحديث رسالة البانل.'}",
+            discord.Color.green()
+        ),
+        ephemeral=True
+    )
+
+
+@bot.tree.command(
+    name="panel-remove-ticket",
+    description="إزالة نوع تذكرة من بانل معين"
+)
+@app_commands.describe(
+    panel_id="معرف البانل",
+    ticket_id="معرف نوع التذكرة"
+)
+async def panel_remove_ticket(
+    interaction: discord.Interaction,
+    panel_id: str,
+    ticket_id: str
+):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ هذا الأمر للمشرفين فقط.",
+            ephemeral=True
+        )
+        return
+
+    panel = database["panels"].get(panel_id)
+    if not panel:
+        await interaction.response.send_message(
+            f"❌ البانل `{panel_id}` غير موجود.",
+            ephemeral=True
+        )
+        return
+
+    if ticket_id not in panel.get("tickets", []):
+        await interaction.response.send_message(
+            "❌ هذه التذكرة غير موجودة داخل هذا البانل.",
+            ephemeral=True
+        )
+        return
+
+    panel["tickets"].remove(ticket_id)
+    save_database()
+
+    updated = await refresh_panel_message(interaction.guild, panel_id)
+    ticket = database["tickets"].get(ticket_id)
+    ticket_name = ticket["name"] if ticket else ticket_id
+
+    await interaction.response.send_message(
+        embed=make_embed(
+            "✅ تمت إزالة التذكرة",
+            f"🎫 **التذكرة:** {ticket_name}\n"
+            f"🆔 **المعرف:** `{ticket_id}`\n"
+            f"🖥️ **البانل:** `{panel_id}`\n\n"
+            f"{'🔄 تم تحديث البانل.' if updated else '⚠️ تمت الإزالة لكن تعذر تحديث البانل.'}",
+            discord.Color.green()
+        ),
+        ephemeral=True
+    )
+
+
+@bot.tree.command(
+    name="panel-tickets",
+    description="عرض التذاكر الموجودة داخل بانل معين"
+)
+@app_commands.describe(
+    panel_id="معرف البانل مثل panel_1"
+)
+async def panel_tickets(
+    interaction: discord.Interaction,
+    panel_id: str
+):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ هذا الأمر للمشرفين فقط.",
+            ephemeral=True
+        )
+        return
+
+    panel = database["panels"].get(panel_id)
+    if not panel:
+        await interaction.response.send_message(
+            f"❌ البانل `{panel_id}` غير موجود.",
+            ephemeral=True
+        )
+        return
+
+    ticket_ids = panel.get("tickets", [])
+    if not ticket_ids:
+        await interaction.response.send_message(
+            f"📭 البانل `{panel_id}` لا يحتوي على أي تذاكر.",
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(
+        title=f"🎫 تذاكر {panel_id}",
+        color=discord.Color.blue()
+    )
+
+    text = ""
+    for ticket_id in ticket_ids:
+        ticket = database["tickets"].get(ticket_id)
+        if ticket:
+            text += (
+                f"{ticket.get('emoji', '🎫')} "
+                f"**{ticket['name']}**\n"
+                f"🆔 `{ticket_id}`\n\n"
+            )
+
+    if not text:
+        text = "❌ لا توجد تذاكر صالحة."
+
+    embed.description = text
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ==================================
 # القوائم والبانل الموحد
 # ==================================
 
 class TicketSelect(discord.ui.Select):
 
-    def __init__(self):
-
+    def __init__(self, panel_id):
+        self.panel_id = panel_id
+        panel = database["panels"].get(panel_id)
         options = []
 
-        for ticket_id, data in database["tickets"].items():
+        if panel:
+            panel_tickets = panel.get("tickets", [])
+            for ticket_id in panel_tickets:
+                data = database["tickets"].get(ticket_id)
+                if not data:
+                    continue
 
-            options.append(
-                discord.SelectOption(
-                    label=data["name"],
-                    value=ticket_id,
-                    description=data.get(
-                        "panel_description",
-                        data.get("description", "فتح تذكرة")
-                    )[:100],
-                    emoji=data.get("emoji", "🎫")
+                options.append(
+                    discord.SelectOption(
+                        label=data["name"][:100],
+                        value=ticket_id,
+                        description=data.get(
+                            "panel_description",
+                            data.get("description", "فتح تذكرة")
+                        )[:100],
+                        emoji=data.get("emoji", "🎫")
+                    )
                 )
-            )
-
 
         if not options:
-
             options.append(
                 discord.SelectOption(
-                    label="لا يوجد تذاكر",
+                    label="لا توجد تذاكر",
                     value="none",
+                    description="لا توجد تذاكر مضافة لهذا البانل",
                     emoji="❌"
                 )
             )
 
-
-        # خيار تحديث المنيو
         options.append(
             discord.SelectOption(
-                label="🔄 تحديث القائمة",
+                label="تحديث القائمة",
                 value="refresh_menu",
                 description="إعادة تحميل أنواع التذاكر",
                 emoji="🔄"
             )
         )
 
-
         super().__init__(
             placeholder="🎫 اختر نوع التذكرة",
             options=options,
-            custom_id="ticket_select_menu_secure"
+            custom_id=f"ticket_select_{panel_id}"
         )
 
-
     async def callback(self, interaction: discord.Interaction):
-
         ticket_type = self.values[0]
 
-
-        # تحديث المنيو
         if ticket_type == "refresh_menu":
-
             await interaction.response.edit_message(
-                view=TicketPanel()
+                view=TicketPanel(self.panel_id)
             )
-
             return
-
-
 
         if ticket_type == "none":
-
             await interaction.response.send_message(
-                "❌ لا يوجد أنواع تذاكر حاليا",
+                "❌ لا توجد تذاكر مضافة لهذا البانل حالياً.",
                 ephemeral=True
             )
-
             return
 
-
-
         user_id = interaction.user.id
-
         ticket_settings = database["tickets"].get(ticket_type)
 
+        if not ticket_settings:
+            await interaction.response.send_message(
+                "❌ نوع التذكرة لم يعد موجوداً.",
+                ephemeral=True
+            )
+            return
 
-
-        # منع فتح أكثر من تذكرة
         for t in database["open_tickets"].values():
-
             if t.get("owner") == user_id:
-
                 await interaction.response.send_message(
-                    "❌ لديك تذكرة مفتوحة بالفعل",
+                    "❌ لديك تذكرة مفتوحة بالفعل.",
                     ephemeral=True
                 )
-
                 return
 
-
-
-        # طلب سبب
-        if ticket_settings and ticket_settings.get("ask_reason"):
-
+        if ticket_settings.get("ask_reason"):
             await interaction.response.send_modal(
                 TicketFormModal(ticket_type)
             )
-
             return
-
-
 
         await create_ticket(
             interaction,
@@ -928,12 +1130,11 @@ class TicketSelect(discord.ui.Select):
 
 class TicketPanel(discord.ui.View):
 
-    def __init__(self):
-
+    def __init__(self, panel_id):
         super().__init__(timeout=None)
-
+        self.panel_id = panel_id
         self.add_item(
-            TicketSelect()
+            TicketSelect(panel_id)
         )
 
 
@@ -2012,7 +2213,12 @@ async def on_guild_channel_delete(channel):
 async def on_ready():
     print(f"✅ Bot Online: {bot.user}")
 
-    bot.add_view(TicketPanel())
+    for panel_id in database.get("panels", {}):
+        try:
+            bot.add_view(TicketPanel(panel_id))
+        except Exception as e:
+            print(f"❌ Failed to load panel {panel_id}: {e}")
+
     bot.add_view(TicketButtons())
 
     for channel_id in database["open_tickets"]:
