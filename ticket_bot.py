@@ -21,13 +21,10 @@ GUILD_ID = 1532326696714240062
 # ==================================
 # قاعدة البيانات وإعداداتها
 # ==================================
-
-import tempfile
-
-# حفظ الملفات في مجلد النظام المؤقت المسموح الكتابة فيه
-DATABASE_FILE = os.path.join(tempfile.gettempdir(), "tickets_database.json")
-BACKUP_FILE = os.path.join(tempfile.gettempdir(), "tickets_backup.json")
-
+# حفظ الملفات مباشرة في مجلد البوت الحالي
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_FILE = os.path.join(BASE_DIR, "tickets_database.json")
+BACKUP_FILE = os.path.join(BASE_DIR, "tickets_backup.json")
 
 def default_ticket():
     return {
