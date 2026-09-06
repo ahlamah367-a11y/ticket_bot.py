@@ -4,16 +4,7 @@ import discord
 from discord.ext import commands
 
 # ==================================
-# إعداد المسارات وقاعدة البيانات (المسار الصحيح الوحيد)
-# ==================================
-DATA_DIR = os.path.expanduser("~/.bot_data")
-os.makedirs(DATA_DIR, exist_ok=True)
-
-DATABASE_FILE = os.path.join(DATA_DIR, "tickets_database.json")
-BACKUP_FILE = os.path.join(DATA_DIR, "tickets_backup.json")
-
-# ==================================
-# إعداد البوت
+# إعداد البوت والبيانات في الذاكرة (RAM)
 # ==================================
 intents = discord.Intents.default()
 intents.members = True
@@ -22,6 +13,19 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 GUILD_ID = 1532326696714240062
+
+# قاعدة البيانات في الذاكرة المؤقتة فقط (بدون ملفات)
+database = {}
+
+# ==================================
+# دالتا التحميل والحفظ (معدلتان لتفادي الأخطاء)
+# ==================================
+def load_database():
+    global database
+    database = {}  # تبدأ فارغة في الذاكرة
+
+def save_database():
+    pass  # إلغاء عملية الكتابة على الملفات لمنع خطأ Read-only
 
 def default_ticket():
     return {
