@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import tempfile
 from datetime import datetime
 
 import discord
@@ -8,11 +9,13 @@ from discord import app_commands
 from discord.ext import commands
 
 # ==================================
-# إعداد المسارات وقاعدة البيانات (في مجلد /tmp المسموح بالكتابة فيه)
+# إعداد المسارات وقاعدة البيانات (معالجة نظام الملفات القابل للقراءة فقط)
 # ==================================
-import tempfile
-
-DATA_DIR = tempfile.gettempdir() # سيختار مجلد /tmp المتاح للكتابة تلقائياً
+DATA_DIR = os.path.join(tempfile.gettempdir(), "bot_data")
+try:
+    os.makedirs(DATA_DIR, exist_ok=True)
+except Exception as e:
+    print(f"⚠️ Warning creating data directory: {e}")
 
 DATABASE_FILE = os.path.join(DATA_DIR, "tickets_database.json")
 BACKUP_FILE = os.path.join(DATA_DIR, "tickets_backup.json")
@@ -95,25 +98,25 @@ def default_database():
 
 
 def save_database():
-    with open(DATABASE_FILE, "w", encoding="utf-8") as file:
-        json.dump(database, file, indent=4, ensure_ascii=False)
+    try:
+        with open(DATABASE_FILE, "w", encoding="utf-8") as file:
+            json.dump(database, file, indent=4, ensure_ascii=False)
+    except Exception as e:
+        print(f"❌ Error saving database: {e}")
 
 
 def load_database():
     if not os.path.exists(DATABASE_FILE):
         return default_database()
-    with open(DATABASE_FILE, "r", encoding="utf-8") as file:
-        try:
+    try:
+        with open(DATABASE_FILE, "r", encoding="utf-8") as file:
             return json.load(file)
-        except Exception:
-            return default_database()
+    except Exception as e:
+        print(f"❌ Error loading database: {e}")
+        return default_database()
 
 
-try:
-    database = load_database()
-except Exception:
-    database = default_database()
-
+database = load_database()
 save_database()
 
 if "panels" not in database:
@@ -203,14 +206,21 @@ async def backup_tickets(interaction: discord.Interaction):
             "❌ للمشرفين فقط", ephemeral=True
         )
         return
-    filename = f"backup-{datetime.now().strftime('%Y-%m-%d')}.json"
-    with open(filename, "w", encoding="utf-8") as f:
-        json.dump(database, f, indent=4, ensure_ascii=False)
-    await interaction.response.send_message(
-        "✅ تم إنشاء نسخة احتياطية",
-        file=discord.File(filename),
-        ephemeral=True,
+    filename = os.path.join(
+        tempfile.gettempdir(), f"backup-{datetime.now().strftime('%Y-%m-%d')}.json"
     )
+    try:
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(database, f, indent=4, ensure_ascii=False)
+        await interaction.response.send_message(
+            "✅ تم إنشاء نسخة احتياطية",
+            file=discord.File(filename),
+            ephemeral=True,
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"❌ تعذر إنشاء النسخة الاحتياطية: {e}", ephemeral=True
+        )
 
 
 @bot.tree.command(name="restore-backup", description="استرجاع نسخة احتياطية")
@@ -226,16 +236,21 @@ async def restore_backup(interaction: discord.Interaction):
             "❌ لا يوجد نسخة احتياطية", ephemeral=True
         )
         return
-    with open(BACKUP_FILE, "r", encoding="utf-8") as file:
-        database = json.load(file)
-    await interaction.response.send_message(
-        embed=make_embed(
-            "✅ تم الاسترجاع",
-            "تم استرجاع قاعدة بيانات التذاكر بنجاح.",
-            discord.Color.green(),
-        ),
-        ephemeral=True,
-    )
+    try:
+        with open(BACKUP_FILE, "r", encoding="utf-8") as file:
+            database = json.load(file)
+        await interaction.response.send_message(
+            embed=make_embed(
+                "✅ تم الاسترجاع",
+                "تم استرجاع قاعدة بيانات التذاكر بنجاح.",
+                discord.Color.green(),
+            ),
+            ephemeral=True,
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"❌ خطأ أثناء الاسترجاع: {e}", ephemeral=True
+        )
 
 
 @bot.tree.command(name="add-manager", description="إضافة مدير لنظام التذاكر")
@@ -930,9 +945,12 @@ async def create_transcript(channel):
     </body>
     </html>
     """
-    filename = f"transcript-{channel.id}.html"
-    with open(filename, "w", encoding="utf-8") as file:
-        file.write(html_content)
+    filename = os.path.join(tempfile.gettempdir(), f"transcript-{channel.id}.html")
+    try:
+        with open(filename, "w", encoding="utf-8") as file:
+            file.write(html_content)
+    except Exception as e:
+        print(f"❌ Error writing transcript: {e}")
     return filename
 
 
@@ -971,7 +989,8 @@ async def send_close_log(interaction, channel, transcript):
             color=discord.Color.red(),
         )
         await log.send(embed=embed)
-        await log.send(file=discord.File(transcript))
+        if os.path.exists(transcript):
+            await log.send(file=discord.File(transcript))
 
 
 async def create_ticket(interaction, ticket_type, reason=None):
@@ -1797,8 +1816,11 @@ async def auto_close_checker():
 async def database_backup():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        with open(BACKUP_FILE, "w", encoding="utf-8") as file:
-            json.dump(database, file, indent=4, ensure_ascii=False)
+        try:
+            with open(BACKUP_FILE, "w", encoding="utf-8") as file:
+                json.dump(database, file, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"❌ Backup failed: {e}")
         await asyncio.sleep(3600)
 
 
