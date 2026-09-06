@@ -21,7 +21,8 @@ GUILD_ID = 1532326696714240062
 # ==================================
 # قاعدة البيانات وإعداداتها
 # ==================================
-DATABASE_FILE = "tickets_database.json"
+
+DATABASE_FILE = "/tmp/tickets_database.json"
 BACKUP_FILE = "tickets_backup.json"
 
 
