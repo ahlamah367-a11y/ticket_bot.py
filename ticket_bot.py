@@ -24,7 +24,7 @@ GUILD_ID = 1532326696714240062
 # حفظ الملفات مباشرة في مجلد البوت الحالي
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_FILE = os.path.join(BASE_DIR, "tickets_database.json")
-BACKUP_FILE = os.path.join(BASE_DIR, "tickets_backup.json")
+DATABASE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tickets_database.json")
 
 def default_ticket():
     return {
