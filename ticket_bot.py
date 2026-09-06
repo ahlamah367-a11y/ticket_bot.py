@@ -8,10 +8,11 @@ from discord import app_commands
 from discord.ext import commands
 
 # ==================================
-# إعداد المسارات وقاعدة البيانات (متوافق مع Temalix Hosting)
+# إعداد المسارات وقاعدة البيانات (في مجلد /tmp المسموح بالكتابة فيه)
 # ==================================
-DATA_DIR = "./data"
-os.makedirs(DATA_DIR, exist_ok=True)
+import tempfile
+
+DATA_DIR = tempfile.gettempdir() # سيختار مجلد /tmp المتاح للكتابة تلقائياً
 
 DATABASE_FILE = os.path.join(DATA_DIR, "tickets_database.json")
 BACKUP_FILE = os.path.join(DATA_DIR, "tickets_backup.json")
