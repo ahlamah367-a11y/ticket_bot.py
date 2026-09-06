@@ -8,10 +8,9 @@ from discord import app_commands
 from discord.ext import commands
 
 # ==================================
-# إعداد المسارات وقاعدة البيانات (في مجلد الكود الحالي)
+# إعداد المسارات وقاعدة البيانات (متوافق مع Temalix Hosting)
 # ==================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "bot_data")
+DATA_DIR = "./data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 DATABASE_FILE = os.path.join(DATA_DIR, "tickets_database.json")
