@@ -1,10 +1,23 @@
+import asyncio
 import json
 import os
+from datetime import datetime
+
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 # ==================================
-# إعداد البوت والبيانات في الذاكرة (RAM)
+# إعداد المسارات وقاعدة البيانات (المسار الصحيح الوحيد)
+# ==================================
+DATA_DIR = os.path.expanduser("~/.bot_data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+DATABASE_FILE = os.path.join(DATA_DIR, "tickets_database.json")
+BACKUP_FILE = os.path.join(DATA_DIR, "tickets_backup.json")
+
+# ==================================
+# إعداد البوت
 # ==================================
 intents = discord.Intents.default()
 intents.members = True
@@ -14,18 +27,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 GUILD_ID = 1532326696714240062
 
-# قاعدة البيانات في الذاكرة المؤقتة فقط (بدون ملفات)
-database = {}
-
-# ==================================
-# دالتا التحميل والحفظ (معدلتان لتفادي الأخطاء)
-# ==================================
-def load_database():
-    global database
-    database = {}  # تبدأ فارغة في الذاكرة
-
-def save_database():
-    pass  # إلغاء عملية الكتابة على الملفات لمنع خطأ Read-only
 
 def default_ticket():
     return {
@@ -103,18 +104,17 @@ def load_database():
     with open(DATABASE_FILE, "r", encoding="utf-8") as file:
         try:
             return json.load(file)
-        except:
+        except Exception:
             return default_database()
 
 
 try:
     database = load_database()
-except:
+except Exception:
     database = default_database()
 
 save_database()
 
-# دعم البانلات المتعددة وربط كل بانل بتذاكره الخاصة
 if "panels" not in database:
     database["panels"] = {}
 
@@ -142,7 +142,7 @@ def make_embed(title, description, color=discord.Color.blue()):
 def is_manager(user):
     if user.guild_permissions.administrator:
         return True
-    return user.id in database["stats"]["permissions"]["managers"]
+    return user.id in database["stats"]["permissions"].get("managers", [])
 
 
 def create_ticket_id():
@@ -159,6 +159,8 @@ def get_ticket_from_channel(channel_id):
 
 
 def check_staff(interaction):
+    if is_manager(interaction.user):
+        return True
     ticket = get_ticket_from_channel(interaction.channel.id)
     if not ticket:
         return False
@@ -166,8 +168,6 @@ def check_staff(interaction):
     if not settings:
         return False
     staff_roles = settings.get("staff_roles", [])
-    if is_manager(interaction.user):
-        return True
     user_roles = [role.id for role in interaction.user.roles]
     for role in staff_roles:
         if role in user_roles:
@@ -179,7 +179,7 @@ print("✅ الأجزاء الأساسية وقواعد البيانات جاه�
 
 
 # ==================================
-# إنشاء أنواع التذاكر والأوامر الإدارية (مع حماية المشرفين)
+# الأوامر الإدارية والنظام
 # ==================================
 @bot.tree.command(name="reload-data", description="إعادة تحميل قاعدة البيانات")
 async def reload_data(interaction: discord.Interaction):
@@ -365,13 +365,12 @@ async def ticket_delete(interaction: discord.Interaction, ticket_id: str):
         return
     del database["tickets"][ticket_id]
 
-    # إزالة التذكرة من جميع البانلات التي كانت تحتوي عليها
     for panel_id, panel in database.get("panels", {}).items():
         if ticket_id in panel.get("tickets", []):
             panel["tickets"].remove(ticket_id)
             try:
                 await refresh_panel_message(interaction.guild, panel_id)
-            except:
+            except Exception:
                 pass
     save_database()
     await interaction.response.send_message(
@@ -456,7 +455,7 @@ async def ticket_rename_type(
 
 
 # ==================================
-# إعدادات البانل والمودال (البانلات المتعددة)
+# إعدادات البانل والمودال
 # ==================================
 @bot.tree.command(name="add-ticket-panel", description="إنشاء بانل تذاكر جديد")
 @app_commands.describe(
@@ -573,7 +572,7 @@ async def delete_ticket_panel(interaction: discord.Interaction, panel_id: str):
         try:
             message = await channel.fetch_message(panel.get("message_id"))
             await message.delete()
-        except:
+        except Exception:
             pass
     del database["panels"][panel_id]
     save_database()
@@ -816,9 +815,6 @@ class TicketSelect(discord.ui.Select):
         await create_ticket(interaction, ticket_type, None)
 
 
-# ==================================
-# View البانل
-# ==================================
 class TicketPanel(discord.ui.View):
     def __init__(self, panel_id):
         super().__init__(timeout=None)
@@ -827,7 +823,7 @@ class TicketPanel(discord.ui.View):
 
 
 # ==================================
-# نظام نماذج التذاكر (Ticket Forms)
+# نظام نماذج التذاكر
 # ==================================
 class TicketFormModal(discord.ui.Modal):
     def __init__(self, ticket_type):
@@ -1075,7 +1071,7 @@ async def create_ticket(interaction, ticket_type, reason=None):
 
 
 # ==================================
-# أزرار وأدوات داخل التذكرة
+# أزرار داخل التذكرة
 # ==================================
 class TicketButtons(discord.ui.View):
     def __init__(self):
@@ -1130,7 +1126,7 @@ class TicketButtons(discord.ui.View):
         )
         await interaction.channel.send(embed=embed)
         await interaction.response.send_message(
-            f"👑 تم استلام التذكرة بنجاح", ephemeral=True
+            "👑 تم استلام التذكرة بنجاح", ephemeral=True
         )
 
     @discord.ui.button(
@@ -1204,7 +1200,7 @@ class RatingView(discord.ui.View):
             if close_category:
                 try:
                     await channel.edit(category=close_category)
-                except:
+                except Exception:
                     pass
 
         transcript = await create_transcript(channel)
@@ -1217,7 +1213,7 @@ class RatingView(discord.ui.View):
         await asyncio.sleep(3)
         try:
             await channel.delete()
-        except:
+        except Exception:
             pass
 
     @discord.ui.button(
@@ -1313,7 +1309,7 @@ async def claim_ticket(interaction: discord.Interaction):
     )
     await interaction.channel.send(embed=embed)
     await interaction.response.send_message(
-        f"👑 تم استلام التذكرة", ephemeral=True
+        "👑 تم استلام التذكرة", ephemeral=True
     )
 
 
@@ -1383,12 +1379,17 @@ async def priority_ticket(
         )
         return
     ticket = get_ticket_from_channel(interaction.channel.id)
-    ticket["priority"] = level.value
-    ticket["last_activity"] = str(datetime.now())
-    save_database()
-    await interaction.response.send_message(
-        f"📌 تم تغيير الأولوية إلى: {level.name}"
-    )
+    if ticket:
+        ticket["priority"] = level.value
+        ticket["last_activity"] = str(datetime.now())
+        save_database()
+        await interaction.response.send_message(
+            f"📌 تم تغيير الأولوية إلى: {level.name}"
+        )
+    else:
+        await interaction.response.send_message(
+            "❌ هذه ليست تذكرة صالحة", ephemeral=True
+        )
 
 
 @bot.tree.command(name="ticket-add", description="إضافة عضو للتذكرة")
@@ -1468,7 +1469,7 @@ async def move_ticket(interaction: discord.Interaction, category: str):
         return
     try:
         category_id = int(category)
-    except:
+    except Exception:
         await interaction.response.send_message(
             "❌ ID غير صحيح", ephemeral=True
         )
@@ -1495,7 +1496,7 @@ async def auto_move(interaction: discord.Interaction, category: str):
         return
     try:
         category_id = int(category)
-    except:
+    except Exception:
         await interaction.response.send_message(
             "❌ ID غير صحيح", ephemeral=True
         )
@@ -1751,7 +1752,7 @@ async def anti_spam(message):
     if len(spam_users[user]) >= SPAM_LIMIT:
         try:
             await message.delete()
-        except:
+        except Exception:
             pass
         embed = discord.Embed(
             title="⚠️ حماية السبام",
@@ -1783,11 +1784,11 @@ async def auto_close_checker():
                         await channel.send(embed=embed)
                         try:
                             await channel.delete()
-                        except:
+                        except Exception:
                             pass
                     del database["open_tickets"][channel_id]
                     save_database()
-            except:
+            except Exception:
                 pass
         await asyncio.sleep(300)
 
@@ -1828,14 +1829,20 @@ async def on_guild_channel_delete(channel):
 @bot.event
 async def on_ready():
     print(f"✅ Bot Online: {bot.user}")
+
     for panel_id in database.get("panels", {}):
         try:
             bot.add_view(TicketPanel(panel_id))
         except Exception as e:
             print(f"❌ Failed to load panel {panel_id}: {e}")
+
     bot.add_view(TicketButtons())
+
     for channel_id in database["open_tickets"]:
-        bot.add_view(RatingView(int(channel_id)))
+        try:
+            bot.add_view(RatingView(int(channel_id)))
+        except Exception:
+            pass
 
     bot.loop.create_task(auto_close_checker())
     bot.loop.create_task(database_backup())
