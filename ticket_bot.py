@@ -1,11 +1,16 @@
 import json
 import os
-import random
-import asyncio
-from datetime import datetime, timedelta
 import discord
-from discord import app_commands
 from discord.ext import commands
+
+# ==================================
+# إعداد المسارات وقاعدة البيانات (المسار الصحيح الوحيد)
+# ==================================
+DATA_DIR = os.path.expanduser("~/.bot_data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+DATABASE_FILE = os.path.join(DATA_DIR, "tickets_database.json")
+BACKUP_FILE = os.path.join(DATA_DIR, "tickets_backup.json")
 
 # ==================================
 # إعداد البوت
@@ -17,14 +22,6 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 GUILD_ID = 1532326696714240062
-
-# ==================================
-# قاعدة البيانات وإعداداتها
-# ==================================
-# حفظ الملفات مباشرة في مجلد البوت الحالي
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE_FILE = os.path.join(BASE_DIR, "tickets_database.json")
-DATABASE_FILE = "/tmp/tickets_database.json"
 
 def default_ticket():
     return {
