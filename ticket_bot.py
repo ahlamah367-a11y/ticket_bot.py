@@ -102,7 +102,7 @@ def default_database():
     }
 
 
-
+DATABASE_FILE = "database.json"
 def save_database():
     with open(DATABASE_FILE, "w", encoding="utf-8") as file:
         json.dump(
