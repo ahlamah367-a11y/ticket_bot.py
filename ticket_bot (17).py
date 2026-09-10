@@ -1446,7 +1446,7 @@ async def send_claim_log(interaction, channel, ticket):
     ], color=discord.Color.gold())
 
 
-async def send_close_log(interaction, channel, transcript=None, rating=None, rating_reason=None):
+async def send_close_log(interaction, channel, transcript=None, close_reason=None):
     ticket = database["open_tickets"].get(str(channel.id))
     if not ticket:
         return
@@ -1464,8 +1464,7 @@ async def send_close_log(interaction, channel, transcript=None, rating=None, rat
         ("📅 وقت الفتح", fmt(ticket.get("created")), True),
         ("👑 وقت الاستلام", fmt(ticket.get("claimed_at")), True),
         ("🔒 وقت الإغلاق", fmt(ticket.get("closed_at")), True),
-        ("⭐ التقييم", f"{rating}/5" if rating is not None else "لم يتم التقييم", True),
-        ("📝 سبب التقييم المنخفض", rating_reason or "—", False),
+        ("📝 سبب الإغلاق", close_reason or "لم يتم تحديد سبب", False),
         ("📑 الملاحظات", notes, False),
     ], color=discord.Color.red(), file_path=transcript)
 
@@ -1667,39 +1666,86 @@ class TicketButtons(discord.ui.View):
         custom_id="close_button_secure"
     )
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not check_staff(interaction):
-            await interaction.response.send_message("❌ ليس لديك صلاحية", ephemeral=True)
+        # زر الإغلاق الموجود داخل التذكرة مخصص لصاحب التذكرة فقط.
+        ticket = database["open_tickets"].get(str(interaction.channel.id))
+        if not ticket:
+            await interaction.response.send_message("❌ التذكرة غير موجودة", ephemeral=True)
             return
 
-        channel_id = str(interaction.channel.id)
-        if channel_id in database["open_tickets"]:
-            database["open_tickets"][channel_id]["closed"] = True
-            database["open_tickets"][channel_id]["closed_by"] = interaction.user.id
-            database["open_tickets"][channel_id]["closed_at"] = str(datetime.now())
-            
-            staff = str(interaction.user.id)
-            if staff not in database["stats"]["staff"]:
-                database["stats"]["staff"][staff] = {"claimed": 0, "closed": 0}
-            database["stats"]["staff"][staff]["closed"] += 1
+        if interaction.user.id != ticket.get("owner"):
+            await interaction.response.send_message(
+                "❌ هذا الزر مخصص لصاحب التذكرة فقط. الإدارة تستخدم /close لإغلاق التذكرة.",
+                ephemeral=True
+            )
+            return
 
-            database["stats"]["logs"].append({
-                "user": str(interaction.user.id),
-                "action": "أغلِق التذكرة",
-                "time": str(datetime.now())
-            })
-
-        save_database()
+        if ticket.get("closed"):
+            await interaction.response.send_message("⚠️ التذكرة مغلقة بالفعل.", ephemeral=True)
+            return
 
         await interaction.response.send_message(
-            "🔒 تم تجهيز إغلاق التذكرة\n⭐ اختر تقييم الخدمة:",
+            "🔒 تم طلب إغلاق التذكرة.\n⭐ اختر تقييمك للخدمة:",
             view=RatingView(interaction.channel.id),
             ephemeral=True
         )
 
-
 # ==================================
 # نظام التقييم والإغلاق
 # ==================================
+
+class AdminCloseReasonModal(discord.ui.Modal):
+    def __init__(self, ticket_channel_id):
+        super().__init__(title="سبب إغلاق التذكرة")
+        self.ticket_channel_id = ticket_channel_id
+        self.reason = discord.ui.TextInput(
+            label="سبب الإغلاق",
+            placeholder="اكتب سبب إغلاق التذكرة...",
+            required=True, min_length=2, max_length=1000,
+            style=discord.TextStyle.paragraph
+        )
+        self.add_item(self.reason)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not check_staff(interaction):
+            await interaction.response.send_message("❌ لا تملك صلاحية إغلاق التذكرة.", ephemeral=True)
+            return
+
+        channel = interaction.channel
+        channel_id = str(channel.id)
+        ticket = database["open_tickets"].get(channel_id)
+        if not ticket:
+            await interaction.response.send_message("❌ التذكرة غير موجودة.", ephemeral=True)
+            return
+        if ticket.get("closed"):
+            await interaction.response.send_message("⚠️ التذكرة مغلقة بالفعل.", ephemeral=True)
+            return
+
+        reason = self.reason.value.strip()
+        ticket["closed"] = True
+        ticket["closed_by"] = interaction.user.id
+        ticket["closed_at"] = str(datetime.now())
+        ticket["close_reason"] = reason
+
+        staff = str(interaction.user.id)
+        if staff not in database["stats"]["staff"]:
+            database["stats"]["staff"][staff] = {"claimed": 0, "closed": 0}
+        database["stats"]["staff"][staff]["closed"] += 1
+        database["stats"]["logs"].append({
+            "user": str(interaction.user.id),
+            "action": f"أغلق التذكرة: {reason}",
+            "time": str(datetime.now())
+        })
+        save_database()
+
+        await interaction.response.send_message("🔒 تم إغلاق التذكرة من الإدارة.", ephemeral=True)
+        transcript = await create_transcript(channel)
+        await send_close_log(interaction, channel, transcript, reason)
+        await asyncio.sleep(2)
+        try:
+            await channel.delete()
+        except Exception:
+            pass
+
 
 class CloseRatingReasonModal(discord.ui.Modal):
     def __init__(self, ticket_channel_id, stars):
@@ -1757,6 +1803,7 @@ class RatingView(discord.ui.View):
 
         ticket["rating"] = stars
         ticket["rating_reason"] = rating_reason
+        ticket["close_reason"] = "إغلاق بواسطة صاحب التذكرة بعد إتمام التقييم"
         if not ticket.get("closed_by"):
             ticket["closed_by"] = interaction.user.id
         if not ticket.get("closed_at"):
@@ -1776,7 +1823,7 @@ class RatingView(discord.ui.View):
                     pass
 
         transcript = await create_transcript(channel)
-        await send_close_log(interaction, channel, transcript, stars, rating_reason)
+        await send_close_log(interaction, channel, transcript, ticket.get("close_reason"))
 
         if not interaction.response.is_done():
             await interaction.response.send_message(
@@ -1927,33 +1974,21 @@ async def claim_ticket(interaction: discord.Interaction):
 
 
 
-@bot.tree.command(name="close", description="إغلاق التذكرة")
+@bot.tree.command(name="close", description="إغلاق التذكرة من الإدارة مع سبب")
 async def close_ticket(interaction: discord.Interaction):
     if not check_staff(interaction):
-        await interaction.response.send_message("❌ لا تملك صلاحية", ephemeral=True)
+        await interaction.response.send_message("❌ لا تملك صلاحية إغلاق التذكرة.", ephemeral=True)
         return
 
-    channel_id = str(interaction.channel.id)
-    if channel_id in database["open_tickets"]:
-        database["open_tickets"][channel_id]["closed"] = True
-        database["open_tickets"][channel_id]["closed_by"] = interaction.user.id
-        database["open_tickets"][channel_id]["closed_at"] = str(datetime.now())
-        
-        staff = str(interaction.user.id)
-        if staff not in database["stats"]["staff"]:
-            database["stats"]["staff"][staff] = {"claimed": 0, "closed": 0}
-        database["stats"]["staff"][staff]["closed"] += 1
+    ticket = get_ticket_from_channel(interaction.channel.id)
+    if not ticket:
+        await interaction.response.send_message("❌ التذكرة غير موجودة.", ephemeral=True)
+        return
+    if ticket.get("closed"):
+        await interaction.response.send_message("⚠️ التذكرة مغلقة بالفعل.", ephemeral=True)
+        return
 
-        database["stats"]["logs"].append({
-            "user": str(interaction.user.id),
-            "action": "أغلِق التذكرة",
-            "time": str(datetime.now())
-        })
-
-    save_database()
-    await interaction.response.send_message("⭐ يرجى تقييم التذكرة قبل الإغلاق", view=RatingView(interaction.channel.id), ephemeral=True)
-
-
+    await interaction.response.send_modal(AdminCloseReasonModal(interaction.channel.id))
 
 @bot.tree.command(name="rename", description="تغيير اسم التذكرة")
 @app_commands.describe(name="الاسم الجديد")
