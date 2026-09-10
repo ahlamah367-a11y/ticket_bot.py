@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timedelta
 import asyncio
 import random
+import re
 
 
 # ==================================
@@ -48,7 +49,7 @@ def default_ticket():
         "description": "اضغط لفتح التذكرة",
         "panel_description": "اضغط لفتح التذكرة",
         "emoji": "🎫",
-        "name_format": "{emoji}・{count}",
+        "name_format": "{name}-{count}",
         "color": "blue",
         "welcome_message": "أهلاً {user} 👋\nسيتم الرد عليك قريباً.",
         "ticket_image": None,
@@ -165,8 +166,8 @@ for panel_id, panel in database["panels"].items():
 
 # دعم الإعداد الجديد للتذاكر القديمة
 for ticket_type, ticket_settings in database["tickets"].items():
-    if "name_format" not in ticket_settings:
-        ticket_settings["name_format"] = "{emoji}・{count}"
+    if "name_format" not in ticket_settings or ticket_settings.get("name_format") == "{emoji}・{count}":
+        ticket_settings["name_format"] = "{name}-{count}"
     if "counter" not in ticket_settings:
         ticket_settings["counter"] = 0
 
@@ -605,13 +606,13 @@ async def dashboard(interaction: discord.Interaction):
 @app_commands.describe(
     name="اسم التذكرة",
     description="وصف التذكرة في البانل",
-    name_format="صيغة اسم الروم، استخدم {count} للعداد و {emoji} للإيموجي"
+    name_format="صيغة اسم الروم، استخدم {name} لاسم النوع و {count} للعداد"
 )
 async def ticket_create(
     interaction: discord.Interaction,
     name: str,
     description: str,
-    name_format: str = "{emoji}・{count}"
+    name_format: str = "{name}-{count}"
 ):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ هذا الأمر مخصص للمشرفين فقط", ephemeral=True)
@@ -1469,6 +1470,28 @@ async def send_close_log(interaction, channel, transcript=None, rating=None, rat
     ], color=discord.Color.red(), file_path=transcript)
 
 
+def normalize_ticket_emoji(value):
+    """تحويل الإيموجي المخصص إلى اسم آمن عند استخدامه داخل اسم الروم."""
+    value = str(value or "").strip()
+    match = re.fullmatch(r"<a?:([^:>]+):\d+>", value)
+    if match:
+        return match.group(1)
+    if re.fullmatch(r"a?emoji_\d+", value, flags=re.IGNORECASE):
+        return ""
+    return value
+
+
+def sanitize_ticket_channel_name(name, fallback="ticket"):
+    """تنظيف اسم الروم ومنع ظهور aemoji_ID أو صيغ Discord غير الصالحة."""
+    name = str(name or "").strip()
+    name = re.sub(r"<a?:([^:>]+):\d+>", lambda m: m.group(1), name)
+    name = re.sub(r"\s+", "-", name)
+    name = re.sub(r"-{2,}", "-", name)
+    name = name.replace("@", "").replace("#", "")
+    name = name.strip("- ")
+    return (name or fallback)[:100]
+
+
 async def create_ticket(interaction, ticket_type, reason=None, panel_id=None):
     settings = database["tickets"].get(ticket_type)
     if not settings:
@@ -1487,7 +1510,7 @@ async def create_ticket(interaction, ticket_type, reason=None, panel_id=None):
     name_format = settings.get("name_format", "{emoji}・{count}")
     replacements = {
         "{count}": str(number),
-        "{emoji}": str(settings.get("emoji", "🎫")),
+        "{emoji}": normalize_ticket_emoji(settings.get("emoji", "🎫")) or "ticket",
         "{name}": str(settings.get("name", "ticket")),
         "{user}": str(interaction.user.name),
         "{userid}": str(interaction.user.id),
@@ -1498,7 +1521,7 @@ async def create_ticket(interaction, ticket_type, reason=None, panel_id=None):
         channel_name = channel_name.replace(placeholder, value)
 
     # Discord يفرض حداً أقصى لطول اسم الروم
-    channel_name = channel_name.strip()[:100]
+    channel_name = sanitize_ticket_channel_name(channel_name, fallback=f"ticket-{number}")
     if not channel_name:
         channel_name = f"{settings.get('emoji', '🎫')}・{number}"
 
@@ -2366,6 +2389,110 @@ class TicketSettingsView(discord.ui.View):
     async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
         await interaction.response.send_modal(TicketSettingsModal(self.ticket_id, select.values[0]))
 
+
+
+@bot.tree.command(name="ticket-quick-setup", description="إنشاء تذكرة وبانل وربطهما بضغطة واحدة")
+@app_commands.describe(
+    name="اسم نوع التذكرة",
+    description="الوصف الذي يظهر في البانل",
+    emoji="الإيموجي الذي يظهر بجانب خيار فتح التذكرة",
+    panel_id="معرف بانل موجود، اتركه فارغاً لإنشاء بانل جديد",
+    panel_title="عنوان البانل الجديد (اختياري)"
+)
+async def ticket_quick_setup(
+    interaction: discord.Interaction,
+    name: str,
+    description: str,
+    emoji: str = "🎫",
+    panel_id: str = None,
+    panel_title: str = "🎫 نظام التذاكر"
+):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ هذا الأمر للمشرفين فقط", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    ticket_id = create_ticket_id()
+    ticket_data = default_ticket()
+    ticket_data["name"] = name.strip() or "تذكرة جديدة"
+    ticket_data["description"] = description.strip() or "اضغط لفتح التذكرة"
+    ticket_data["panel_description"] = ticket_data["description"]
+    ticket_data["emoji"] = emoji.strip() or "🎫"
+    ticket_data["name_format"] = "{name}-{count}"
+    database["tickets"][ticket_id] = ticket_data
+
+    created_panel = False
+    if panel_id:
+        panel = database.get("panels", {}).get(panel_id)
+        if not panel:
+            await interaction.followup.send(f"❌ البانل `{panel_id}` غير موجود.", ephemeral=True)
+            del database["tickets"][ticket_id]
+            return
+    else:
+        panel_number = 1
+        while f"panel_{panel_number}" in database.get("panels", {}):
+            panel_number += 1
+        panel_id = f"panel_{panel_number}"
+        panel = {
+            "title": panel_title.strip() or "🎫 نظام التذاكر",
+            "description": "اختر نوع التذكرة من القائمة بالأسفل",
+            "image": None,
+            "channel": interaction.channel.id,
+            "message_id": None,
+            "created_by": interaction.user.id,
+            "created_at": str(datetime.now()),
+            "tickets": []
+        }
+        database.setdefault("panels", {})[panel_id] = panel
+        created_panel = True
+
+    panel.setdefault("tickets", [])
+    if ticket_id not in panel["tickets"]:
+        panel["tickets"].append(ticket_id)
+
+    save_database()
+
+    if created_panel:
+        embed = discord.Embed(
+            title=panel["title"],
+            description=panel["description"],
+            color=discord.Color.blue()
+        )
+        message = await interaction.channel.send(
+            embed=embed,
+            view=TicketPanel(panel_id)
+        )
+        panel["message_id"] = message.id
+        save_database()
+    else:
+        await refresh_panel_message(interaction.guild, panel_id)
+
+    await send_ticket_log(
+        interaction.guild,
+        "admin",
+        "⚡ إعداد تذكرة سريع",
+        fields=[
+            ("🎫 التذكرة", f"{ticket_data['emoji']} {ticket_data['name']}", True),
+            ("🆔 المعرف", ticket_id, True),
+            ("🖥️ البانل", panel_id, True),
+            ("👤 بواسطة", interaction.user.mention, True)
+        ],
+        color=discord.Color.green()
+    )
+
+    await interaction.followup.send(
+        embed=make_embed(
+            "⚡ تم الإعداد بسرعة",
+            f"🎫 **التذكرة:** {ticket_data['emoji']} {ticket_data['name']}\n"
+            f"🆔 **المعرف:** `{ticket_id}`\n"
+            f"🖥️ **البانل:** `{panel_id}`\n"
+            f"📍 **الروم:** {interaction.channel.mention}\n\n"
+            "تم إنشاء النوع وربطه بالبانل وتحديث القائمة تلقائياً.",
+            discord.Color.green()
+        ),
+        ephemeral=True
+    )
 
 
 @bot.tree.command(name="ticket-settings", description="تعديل إعدادات نوع تذكرة")
