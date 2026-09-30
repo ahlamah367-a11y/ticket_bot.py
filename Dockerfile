@@ -3,4 +3,4 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-CMD ["python", "ticket_bot_fixed-3-1.py"]
+CMD ["python", "ticket bot fixed-3-1 modified.py"]
